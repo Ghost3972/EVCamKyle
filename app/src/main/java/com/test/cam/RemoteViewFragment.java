@@ -11,13 +11,12 @@ import android.widget.Toast;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
+import androidx.appcompat.widget.SwitchCompat;
 import androidx.core.view.GravityCompat;
 import androidx.drawerlayout.widget.DrawerLayout;
 import androidx.fragment.app.Fragment;
 
-import com.test.cam.dingtalk.DingTalkApiClient;
 import com.test.cam.dingtalk.DingTalkConfig;
-import com.test.cam.dingtalk.DingTalkStreamManager;
 
 public class RemoteViewFragment extends Fragment {
     private static final String TAG = "RemoteViewFragment";
@@ -25,10 +24,9 @@ public class RemoteViewFragment extends Fragment {
     private EditText etClientId, etClientSecret;
     private Button btnSaveConfig, btnStartService, btnStopService, btnMenu;
     private TextView tvConnectionStatus;
+    private SwitchCompat switchAutoStart;
 
     private DingTalkConfig config;
-    private DingTalkApiClient apiClient;
-    private DingTalkStreamManager streamManager;
 
     @Nullable
     @Override
@@ -52,6 +50,7 @@ public class RemoteViewFragment extends Fragment {
         btnStartService = view.findViewById(R.id.btn_start_service);
         btnStopService = view.findViewById(R.id.btn_stop_service);
         tvConnectionStatus = view.findViewById(R.id.tv_connection_status);
+        switchAutoStart = view.findViewById(R.id.switch_auto_start);
         config = new DingTalkConfig(requireContext());
     }
 
@@ -60,6 +59,8 @@ public class RemoteViewFragment extends Fragment {
             etClientId.setText(config.getClientId());
             etClientSecret.setText(config.getClientSecret());
         }
+        // 加载自动启动设置
+        switchAutoStart.setChecked(config.isAutoStart());
     }
 
     private void setupListeners() {
@@ -79,6 +80,14 @@ public class RemoteViewFragment extends Fragment {
         btnSaveConfig.setOnClickListener(v -> saveConfig());
         btnStartService.setOnClickListener(v -> startService());
         btnStopService.setOnClickListener(v -> stopService());
+
+        // 自动启动开关监听
+        switchAutoStart.setOnCheckedChangeListener((buttonView, isChecked) -> {
+            config.setAutoStart(isChecked);
+            Toast.makeText(requireContext(),
+                isChecked ? "已启用自动启动" : "已禁用自动启动",
+                Toast.LENGTH_SHORT).show();
+        });
     }
 
     private void saveConfig() {
@@ -100,116 +109,55 @@ public class RemoteViewFragment extends Fragment {
             return;
         }
 
-        apiClient = new DingTalkApiClient(config);
-
-        // 创建连接回调
-        DingTalkStreamManager.ConnectionCallback connectionCallback = new DingTalkStreamManager.ConnectionCallback() {
-            @Override
-            public void onConnected() {
-                // 检查 Fragment 是否还附加到 Activity
-                if (!isAdded() || getActivity() == null) {
-                    return;
-                }
-                requireActivity().runOnUiThread(() -> {
-                    // 再次检查，因为可能在线程切换时 Fragment 被销毁
-                    if (!isAdded() || getView() == null) {
-                        return;
-                    }
-                    tvConnectionStatus.setText("已连接");
-                    tvConnectionStatus.setTextColor(0xFF66FF66);
-                    btnStartService.setEnabled(false);
-                    btnStopService.setEnabled(true);
-                    Toast.makeText(requireContext(), "服务已启动", Toast.LENGTH_SHORT).show();
-                });
-            }
-
-            @Override
-            public void onDisconnected() {
-                // 检查 Fragment 是否还附加到 Activity
-                if (!isAdded() || getActivity() == null) {
-                    return;
-                }
-                requireActivity().runOnUiThread(() -> {
-                    // 再次检查，因为可能在线程切换时 Fragment 被销毁
-                    if (!isAdded() || getView() == null) {
-                        return;
-                    }
-                    tvConnectionStatus.setText("未连接");
-                    tvConnectionStatus.setTextColor(0xFFFF6666);
-                    btnStartService.setEnabled(true);
-                    btnStopService.setEnabled(false);
-                });
-            }
-
-            @Override
-            public void onError(String error) {
-                // 检查 Fragment 是否还附加到 Activity
-                if (!isAdded() || getActivity() == null) {
-                    return;
-                }
-                requireActivity().runOnUiThread(() -> {
-                    // 再次检查，因为可能在线程切换时 Fragment 被销毁
-                    if (!isAdded() || getView() == null) {
-                        return;
-                    }
-                    tvConnectionStatus.setText("连接失败");
-                    tvConnectionStatus.setTextColor(0xFFFF6666);
-                    Toast.makeText(requireContext(), "连接失败: " + error, Toast.LENGTH_LONG).show();
-                    btnStartService.setEnabled(true);
-                    btnStopService.setEnabled(false);
-                });
-            }
-        };
-
-        // 创建指令回调
-        DingTalkStreamManager.CommandCallback commandCallback = (conversationId, conversationType, userId) -> {
-            if (getActivity() instanceof MainActivity) {
-                ((MainActivity) getActivity()).startRemoteRecording(conversationId, conversationType, userId);
-            }
-        };
-
-        // 创建并启动 Stream 管理器
-        streamManager = new DingTalkStreamManager(requireContext(), config, apiClient, connectionCallback);
-        streamManager.start(commandCallback);
-
-        Toast.makeText(requireContext(), "正在启动服务...", Toast.LENGTH_SHORT).show();
+        if (getActivity() instanceof MainActivity) {
+            ((MainActivity) getActivity()).startDingTalkService();
+        }
     }
 
     private void stopService() {
-        if (streamManager != null) {
-            streamManager.stop();
-            streamManager = null;
+        if (getActivity() instanceof MainActivity) {
+            ((MainActivity) getActivity()).stopDingTalkService();
         }
-        tvConnectionStatus.setText("未连接");
-        tvConnectionStatus.setTextColor(0xFFFF6666);
-        btnStartService.setEnabled(true);
-        btnStopService.setEnabled(false);
-        Toast.makeText(requireContext(), "服务已停止", Toast.LENGTH_SHORT).show();
+    }
+
+    /**
+     * 更新服务状态显示（由 MainActivity 调用）
+     */
+    public void updateServiceStatus() {
+        if (getActivity() instanceof MainActivity) {
+            MainActivity activity = (MainActivity) getActivity();
+            boolean isRunning = activity.isDingTalkServiceRunning();
+
+            if (isRunning) {
+                tvConnectionStatus.setText("已连接");
+                tvConnectionStatus.setTextColor(0xFF66FF66);
+                btnStartService.setEnabled(false);
+                btnStopService.setEnabled(true);
+            } else {
+                tvConnectionStatus.setText("未连接");
+                tvConnectionStatus.setTextColor(0xFFFF6666);
+                btnStartService.setEnabled(true);
+                btnStopService.setEnabled(false);
+            }
+        }
+    }
+
+    @Override
+    public void onResume() {
+        super.onResume();
+        // 每次显示时更新状态
+        updateServiceStatus();
     }
 
     @Override
     public void onDestroyView() {
         super.onDestroyView();
-        // 不要在这里停止服务，让用户手动停止
-        // 或者将 streamManager 移到 Activity 级别
-        // stopService();
+        // 不再在这里停止服务，服务由 MainActivity 管理
     }
 
     @Override
     public void onDestroy() {
         super.onDestroy();
-        // 只在 Fragment 真正销毁时停止服务
-        if (streamManager != null && streamManager.isRunning()) {
-            streamManager.stop();
-            streamManager = null;
-        }
-    }
-
-    public DingTalkApiClient getApiClient() {
-        return apiClient;
-    }
-
-    public DingTalkStreamManager getStreamManager() {
-        return streamManager;
+        // 不再在这里停止服务，服务由 MainActivity 管理
     }
 }

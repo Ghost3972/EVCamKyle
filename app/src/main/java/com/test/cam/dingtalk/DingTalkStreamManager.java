@@ -19,6 +19,8 @@ import org.json.JSONObject;
  */
 public class DingTalkStreamManager {
     private static final String TAG = "DingTalkStreamManager";
+    private static final int MAX_RECONNECT_ATTEMPTS = 5;
+    private static final long RECONNECT_DELAY_MS = 5000; // 5秒
 
     // 钉钉官方事件主题
     private static final String BOT_MESSAGE_TOPIC = "/v1.0/im/bot/messages/get";
@@ -32,6 +34,9 @@ public class DingTalkStreamManager {
     private OpenDingTalkClient streamClient;
     private ChatbotMessageListener messageListener;
     private boolean isRunning = false;
+    private boolean autoReconnect = false;
+    private int reconnectAttempts = 0;
+    private CommandCallback currentCommandCallback;
 
     public interface ConnectionCallback {
         void onConnected();
@@ -54,8 +59,34 @@ public class DingTalkStreamManager {
 
     /**
      * 启动 Stream 连接
+     * @param commandCallback 指令回调
      */
     public void start(CommandCallback commandCallback) {
+        start(commandCallback, false);
+    }
+
+    /**
+     * 启动 Stream 连接
+     * @param commandCallback 指令回调
+     * @param enableAutoReconnect 是否启用自动重连
+     */
+    public void start(CommandCallback commandCallback, boolean enableAutoReconnect) {
+        if (isRunning) {
+            Log.w(TAG, "Stream 客户端已在运行");
+            return;
+        }
+
+        this.currentCommandCallback = commandCallback;
+        this.autoReconnect = enableAutoReconnect;
+        this.reconnectAttempts = 0;
+
+        startConnection();
+    }
+
+    /**
+     * 内部方法：启动连接
+     */
+    private void startConnection() {
         if (isRunning) {
             Log.w(TAG, "Stream 客户端已在运行");
             return;
@@ -66,7 +97,7 @@ public class DingTalkStreamManager {
                 Log.d(TAG, "正在初始化钉钉 Stream 客户端...");
 
                 // 创建消息监听器
-                messageListener = new ChatbotMessageListener(context, apiClient, commandCallback, mainHandler);
+                messageListener = new ChatbotMessageListener(context, apiClient, currentCommandCallback, mainHandler);
 
                 // 使用官方 SDK 构建客户端
                 streamClient = OpenDingTalkStreamClientBuilder.custom()
@@ -83,6 +114,7 @@ public class DingTalkStreamManager {
                 streamClient.start();
 
                 isRunning = true;
+                reconnectAttempts = 0; // 重置重连计数
                 Log.d(TAG, "Stream 客户端已启动");
 
                 // 通知连接成功
@@ -90,7 +122,20 @@ public class DingTalkStreamManager {
 
             } catch (Exception e) {
                 Log.e(TAG, "启动 Stream 客户端失败", e);
-                mainHandler.post(() -> callback.onError("启动失败: " + e.getMessage()));
+                isRunning = false;
+
+                // 如果启用了自动重连，尝试重连
+                if (autoReconnect && reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
+                    reconnectAttempts++;
+                    Log.d(TAG, "将在 " + RECONNECT_DELAY_MS + "ms 后尝试第 " + reconnectAttempts + " 次重连");
+                    mainHandler.postDelayed(() -> {
+                        if (autoReconnect) { // 再次检查是否仍需要重连
+                            startConnection();
+                        }
+                    }, RECONNECT_DELAY_MS);
+                } else {
+                    mainHandler.post(() -> callback.onError("启动失败: " + e.getMessage()));
+                }
             }
         }).start();
     }
@@ -102,6 +147,10 @@ public class DingTalkStreamManager {
         if (!isRunning) {
             return;
         }
+
+        // 禁用自动重连
+        autoReconnect = false;
+        reconnectAttempts = 0;
 
         new Thread(() -> {
             try {

@@ -13,6 +13,7 @@ public class DingTalkConfig {
     private static final String KEY_ACCESS_TOKEN = "access_token";
     private static final String KEY_TOKEN_EXPIRE_TIME = "token_expire_time";
     private static final String KEY_WEBHOOK_URL = "webhook_url";
+    private static final String KEY_AUTO_START = "auto_start";
 
     private final SharedPreferences prefs;
 
@@ -67,5 +68,15 @@ public class DingTalkConfig {
 
     public String getWebhookUrl() {
         return prefs.getString(KEY_WEBHOOK_URL, "");
+    }
+
+    public void setAutoStart(boolean autoStart) {
+        prefs.edit()
+                .putBoolean(KEY_AUTO_START, autoStart)
+                .apply();
+    }
+
+    public boolean isAutoStart() {
+        return prefs.getBoolean(KEY_AUTO_START, false);
     }
 }

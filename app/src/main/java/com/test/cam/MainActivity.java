@@ -28,6 +28,8 @@ import androidx.fragment.app.FragmentTransaction;
 import com.google.android.material.navigation.NavigationView;
 import com.test.cam.camera.MultiCameraManager;
 import com.test.cam.dingtalk.DingTalkApiClient;
+import com.test.cam.dingtalk.DingTalkConfig;
+import com.test.cam.dingtalk.DingTalkStreamManager;
 import com.test.cam.dingtalk.VideoUploadService;
 
 import java.io.BufferedReader;
@@ -71,16 +73,6 @@ public class MainActivity extends AppCompatActivity {
     private View recordingLayout;  // 录制界面布局
     private View fragmentContainer;  // Fragment容器
 
-    // 日志相关
-    private TextView logText;
-    private ScrollView logScroll;
-    private TextView logToggle;
-    private boolean logExpanded = false;
-    private StringBuilder logBuffer = new StringBuilder();
-    private Process logcatProcess;
-    private Thread logcatThread;
-    private volatile boolean logcatRunning = false;
-    private boolean logcatStarted = false;
 
     // 远程录制相关
     private String remoteConversationId;  // 钉钉会话 ID
@@ -88,6 +80,11 @@ public class MainActivity extends AppCompatActivity {
     private String remoteUserId;  // 钉钉用户 ID
     private android.os.Handler autoStopHandler;  // 自动停止录制的 Handler
     private Runnable autoStopRunnable;  // 自动停止录制的 Runnable
+
+    // 钉钉服务相关（移到 Activity 级别）
+    private DingTalkConfig dingTalkConfig;
+    private DingTalkApiClient dingTalkApiClient;
+    private DingTalkStreamManager dingTalkStreamManager;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -97,6 +94,9 @@ public class MainActivity extends AppCompatActivity {
         initViews();
         setupNavigationDrawer();
 
+        // 初始化钉钉配置
+        dingTalkConfig = new DingTalkConfig(this);
+
         // 初始化自动停止 Handler
         autoStopHandler = new android.os.Handler(android.os.Looper.getMainLooper());
 
@@ -104,6 +104,11 @@ public class MainActivity extends AppCompatActivity {
         // 等待TextureView准备好后再初始化
         if (!checkPermissions()) {
             requestPermissions();
+        }
+
+        // 如果启用了自动启动，启动钉钉服务
+        if (dingTalkConfig.isConfigured() && dingTalkConfig.isAutoStart()) {
+            startDingTalkService();
         }
     }
 
@@ -119,14 +124,6 @@ public class MainActivity extends AppCompatActivity {
         textureRight = findViewById(R.id.texture_right);
         btnStartRecord = findViewById(R.id.btn_start_record);
         btnStopRecord = findViewById(R.id.btn_stop_record);
-
-        // 初始化日志视图
-        logText = findViewById(R.id.log_text);
-        logScroll = findViewById(R.id.log_scroll);
-        logToggle = findViewById(R.id.log_toggle);
-
-        // 日志面板点击事件
-        findViewById(R.id.log_header).setOnClickListener(v -> toggleLogPanel());
 
         // 菜单按钮点击事件
         findViewById(R.id.btn_menu).setOnClickListener(v -> {
@@ -146,11 +143,9 @@ public class MainActivity extends AppCompatActivity {
             public void onSurfaceTextureAvailable(@NonNull android.graphics.SurfaceTexture surface, int width, int height) {
                 textureReadyCount++;
                 Log.d(TAG, "TextureView ready: " + textureReadyCount + "/4");
-                appendLog("TextureView就绪: " + textureReadyCount + "/4 (尺寸: " + width + "x" + height + ")");
 
                 // 当所有TextureView都准备好后，初始化摄像头
                 if (textureReadyCount == 4 && checkPermissions()) {
-                    appendLog("所有TextureView已就绪,开始初始化摄像头");
                     initCamera();
                 }
             }
@@ -158,14 +153,12 @@ public class MainActivity extends AppCompatActivity {
             @Override
             public void onSurfaceTextureSizeChanged(@NonNull android.graphics.SurfaceTexture surface, int width, int height) {
                 Log.d(TAG, "TextureView size changed: " + width + "x" + height);
-                appendLog("TextureView尺寸变化: " + width + "x" + height);
             }
 
             @Override
             public boolean onSurfaceTextureDestroyed(@NonNull android.graphics.SurfaceTexture surface) {
                 textureReadyCount--;
                 Log.d(TAG, "TextureView destroyed, remaining: " + textureReadyCount);
-                appendLog("TextureView销毁,剩余: " + textureReadyCount);
                 return true;
             }
 
@@ -179,9 +172,6 @@ public class MainActivity extends AppCompatActivity {
         textureBack.setSurfaceTextureListener(surfaceTextureListener);
         textureLeft.setSurfaceTextureListener(surfaceTextureListener);
         textureRight.setSurfaceTextureListener(surfaceTextureListener);
-
-        // 初始化日志
-        appendLog("应用启动");
     }
 
     /**
@@ -254,110 +244,19 @@ public class MainActivity extends AppCompatActivity {
         transaction.commit();
     }
 
-    /**
-     * 切换日志面板显示/隐藏
-     */
-    private void toggleLogPanel() {
-        logExpanded = !logExpanded;
-        if (logExpanded) {
-            logScroll.setVisibility(android.view.View.VISIBLE);
-            logToggle.setText("▲");
-        } else {
-            logScroll.setVisibility(android.view.View.GONE);
-            logToggle.setText("▼");
-        }
-    }
-
-    /**
-     * 添加日志信息
-     */
-    private void appendLog(String message) {
-        String timestamp = new java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.getDefault())
-                .format(new java.util.Date());
-        String logLine = timestamp + " - " + message + "\n";
-
-        runOnUiThread(() -> {
-            logBuffer.append(logLine);
-            // 限制日志缓冲区大小
-            if (logBuffer.length() > 20000) {
-                logBuffer.delete(0, logBuffer.length() - 20000);
-            }
-            logText.setText(logBuffer.toString());
-            // 自动滚动到底部
-            logScroll.post(() -> logScroll.fullScroll(android.view.View.FOCUS_DOWN));
-        });
-
-        // 同时输出到 Logcat
-        Log.d(TAG, message);
-    }
-
-    private void appendLogcatLine(String line) {
-        if (logText == null || logScroll == null) {
-            return;
-        }
-        runOnUiThread(() -> {
-            logBuffer.append(line).append('\n');
-            if (logBuffer.length() > 20000) {
-                logBuffer.delete(0, logBuffer.length() - 20000);
-            }
-            logText.setText(logBuffer.toString());
-            logScroll.post(() -> logScroll.fullScroll(android.view.View.FOCUS_DOWN));
-        });
-    }
-
-    private void startLogcatReader() {
-        if (logcatThread != null) {
-            return;
-        }
-        logcatRunning = true;
-        logcatThread = new Thread(() -> {
-            try {
-                ProcessBuilder pb = new ProcessBuilder(
-                        "logcat", "-v", "time",
-                        "-s", "CameraService:V", "Camera3-Device:V", "Camera3-Stream:V", "Camera3-Output:V", "camera3:V"
-                );
-                pb.redirectErrorStream(true);
-                logcatProcess = pb.start();
-                try (BufferedReader reader = new BufferedReader(new InputStreamReader(logcatProcess.getInputStream()))) {
-                    String line;
-                    while (logcatRunning && (line = reader.readLine()) != null) {
-                        appendLogcatLine(line);
-                    }
-                }
-            } catch (IOException e) {
-                appendLog("logcat启动失败: " + e.getMessage());
-            }
-        }, "LogcatReader");
-        logcatThread.start();
-    }
-
-    private void stopLogcatReader() {
-        logcatRunning = false;
-        if (logcatProcess != null) {
-            logcatProcess.destroy();
-            logcatProcess = null;
-        }
-        if (logcatThread != null) {
-            logcatThread.interrupt();
-            logcatThread = null;
-        }
-    }
 
     private boolean checkPermissions() {
         for (String permission : getRequiredPermissions()) {
             if (ContextCompat.checkSelfPermission(this, permission) != PackageManager.PERMISSION_GRANTED) {
                 Log.d(TAG, "Missing permission: " + permission);
-                appendLog("缺少权限: " + permission);
                 return false;
             }
         }
-        appendLog("权限检查通过");
         return true;
     }
 
     private void requestPermissions() {
         Log.d(TAG, "Requesting permissions...");
-        appendLog("请求权限...");
         ActivityCompat.requestPermissions(this, getRequiredPermissions(), REQUEST_PERMISSIONS);
     }
 
@@ -366,14 +265,12 @@ public class MainActivity extends AppCompatActivity {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
         if (requestCode == REQUEST_PERMISSIONS) {
             if (checkPermissions()) {
-                appendLog("权限已授予");
                 // 权限已授予，但需要等待TextureView准备好
                 // 如果TextureView已经准备好，立即初始化摄像头
                 if (textureReadyCount == 4) {
                     initCamera();
                 }
             } else {
-                appendLog("权限被拒绝,应用退出");
                 Toast.makeText(this, "需要相机和存储权限", Toast.LENGTH_SHORT).show();
                 finish();
             }
@@ -384,23 +281,15 @@ public class MainActivity extends AppCompatActivity {
         // 确保所有TextureView都准备好
         if (textureReadyCount < 4) {
             Log.w(TAG, "Not all TextureViews are ready yet: " + textureReadyCount + "/4");
-            appendLog("TextureView未就绪: " + textureReadyCount + "/4");
             return;
         }
 
-        appendLog("开始初始化摄像头...");
-        if (!logcatStarted) {
-            logcatStarted = true;
-            startLogcatReader();
-            appendLog("logcat reader started");
-        }
         cameraManager = new MultiCameraManager(this);
         cameraManager.setMaxOpenCameras(4);
-        appendLog("open all 4 cameras");
 
         // 设置摄像头状态回调
         cameraManager.setStatusCallback((cameraId, status) -> {
-            appendLog("摄像头 " + cameraId + ": " + status);
+            Log.d(TAG, "摄像头 " + cameraId + ": " + status);
 
             // 如果摄像头断开或被占用，提示用户
             if (status.contains("错误") || status.contains("断开")) {
@@ -415,18 +304,12 @@ public class MainActivity extends AppCompatActivity {
                             Toast.LENGTH_LONG).show();
                     }
                 });
-            } else if (status.contains("已打开") || status.contains("预览已启动")) {
-                // 摄像头恢复正常
-                runOnUiThread(() -> {
-                    // 可以在这里添加恢复提示，但为了避免过多提示，暂时注释
-                    // Toast.makeText(MainActivity.this, "摄像头 " + cameraId + " 已恢复", Toast.LENGTH_SHORT).show();
-                });
             }
         });
 
         // 设置预览尺寸回调
         cameraManager.setPreviewSizeCallback((cameraKey, cameraId, previewSize) -> {
-            appendLog("摄像头 " + cameraId + " 预览尺寸: " + previewSize.getWidth() + "x" + previewSize.getHeight());
+            Log.d(TAG, "摄像头 " + cameraId + " 预览尺寸: " + previewSize.getWidth() + "x" + previewSize.getHeight());
             // 根据 camera key 设置对应 TextureView 的宽高比
             runOnUiThread(() -> {
                 final AutoFitTextureView textureView;
@@ -454,7 +337,7 @@ public class MainActivity extends AppCompatActivity {
                     if (needRotation) {
                         // 左右摄像头：容器使用旋转后的宽高比（800x1280，竖向）
                         textureView.setAspectRatio(previewSize.getHeight(), previewSize.getWidth());
-                        appendLog("设置 " + cameraKey + " 宽高比(旋转后): " + previewSize.getHeight() + ":" + previewSize.getWidth());
+                        Log.d(TAG, "设置 " + cameraKey + " 宽高比(旋转后): " + previewSize.getHeight() + ":" + previewSize.getWidth());
 
                         // 应用旋转变换（修正倒立问题）
                         int rotation = "left".equals(cameraKey) ? 90 : 270;  // 左顺时针90度(90)，右逆时针90度(270)
@@ -462,7 +345,7 @@ public class MainActivity extends AppCompatActivity {
                     } else {
                         // 前后摄像头：使用原始宽高比（1280x800，横向）
                         textureView.setAspectRatio(previewSize.getWidth(), previewSize.getHeight());
-                        appendLog("设置 " + cameraKey + " 宽高比: " + previewSize.getWidth() + ":" + previewSize.getHeight());
+                        Log.d(TAG, "设置 " + cameraKey + " 宽高比: " + previewSize.getWidth() + ":" + previewSize.getHeight());
                     }
                 }
             });
@@ -476,18 +359,15 @@ public class MainActivity extends AppCompatActivity {
                 String[] cameraIds = cm.getCameraIdList();
 
                 Log.d(TAG, "Available cameras: " + cameraIds.length);
-                appendLog("检测到 " + cameraIds.length + " 个摄像头");
 
                 for (String id : cameraIds) {
                     Log.d(TAG, "Camera ID: " + id);
-                    appendLog("摄像头ID: " + id);
                 }
 
                 // 根据可用摄像头数量初始化
                 if (cameraIds.length >= 4) {
                     // 有4个或更多摄像头
                     // 修正摄像头位置映射：前=cameraIds[2], 后=cameraIds[1], 左=cameraIds[3], 右=cameraIds[0]
-                    appendLog("使用4路摄像头模式");
                     cameraManager.initCameras(
                             cameraIds[2], textureFront,  // 前摄像头使用 cameraIds[2]
                             cameraIds[1], textureBack,   // 后摄像头使用 cameraIds[1]
@@ -496,7 +376,6 @@ public class MainActivity extends AppCompatActivity {
                     );
                 } else if (cameraIds.length >= 2) {
                     // 只有2个摄像头，使用前两个位置
-                    appendLog("使用2路摄像头模式(复用显示)");
                     cameraManager.initCameras(
                             cameraIds[0], textureLeft,  // 复用第一个
                             cameraIds[1], textureRight,  // 复用第二个
@@ -507,7 +386,6 @@ public class MainActivity extends AppCompatActivity {
                     );
                 } else if (cameraIds.length == 1) {
                     // 只有1个摄像头，所有位置使用同一个
-                    appendLog("使用1路摄像头模式(复用显示)");
                     cameraManager.initCameras(
                             cameraIds[0], textureFront,
                             cameraIds[0], textureBack,
@@ -515,22 +393,18 @@ public class MainActivity extends AppCompatActivity {
                             cameraIds[0], textureRight
                     );
                 } else {
-                    appendLog("错误: 没有可用的摄像头");
                     Toast.makeText(this, "没有可用的摄像头", Toast.LENGTH_SHORT).show();
                     return;
                 }
 
                 // 打开所有摄像头
-                appendLog("正在打开摄像头...");
                 cameraManager.openAllCameras();
 
                 Log.d(TAG, "Camera initialized with " + cameraIds.length + " cameras");
-                appendLog("摄像头初始化完成");
                 Toast.makeText(this, "已打开 " + cameraIds.length + " 个摄像头", Toast.LENGTH_SHORT).show();
 
             } catch (CameraAccessException e) {
                 Log.e(TAG, "Failed to access camera", e);
-                appendLog("摄像头访问失败: " + e.getMessage());
                 Toast.makeText(this, "摄像头访问失败: " + e.getMessage(), Toast.LENGTH_SHORT).show();
             }
         });
@@ -551,7 +425,7 @@ public class MainActivity extends AppCompatActivity {
             int viewHeight = textureView.getHeight();
 
             if (viewWidth == 0 || viewHeight == 0) {
-                appendLog(cameraKey + " TextureView 尺寸为0，延迟应用旋转");
+                Log.d(TAG, cameraKey + " TextureView 尺寸为0，延迟应用旋转");
                 // 如果视图还没有尺寸，再次延迟
                 textureView.postDelayed(() -> applyRotationTransform(textureView, previewSize, rotation, cameraKey), 100);
                 return;
@@ -590,23 +464,19 @@ public class MainActivity extends AppCompatActivity {
             }
 
             textureView.setTransform(matrix);
-            appendLog(cameraKey + " 应用修正旋转: " + rotation + "度");
+            Log.d(TAG, cameraKey + " 应用修正旋转: " + rotation + "度");
         });
     }
 
     private void startRecording() {
         if (cameraManager != null && !cameraManager.isRecording()) {
-            appendLog("开始录制...");
-            appendLog("提示: 视频将自动分段，每段1分钟");
             boolean success = cameraManager.startRecording();
             if (success) {
                 btnStartRecord.setEnabled(false);
                 btnStopRecord.setEnabled(true);
-                appendLog("录制已开始（自动分段模式）");
                 Toast.makeText(this, "开始录制（每1分钟自动分段）", Toast.LENGTH_SHORT).show();
                 Log.d(TAG, "Recording started");
             } else {
-                appendLog("录制失败");
                 Toast.makeText(this, "录制失败", Toast.LENGTH_SHORT).show();
             }
         }
@@ -614,11 +484,9 @@ public class MainActivity extends AppCompatActivity {
 
     private void stopRecording() {
         if (cameraManager != null) {
-            appendLog("停止录制...");
             cameraManager.stopRecording();
             btnStartRecord.setEnabled(true);
             btnStopRecord.setEnabled(false);
-            appendLog("录制已停止");
             Toast.makeText(this, "录制已停止", Toast.LENGTH_SHORT).show();
             Log.d(TAG, "Recording stopped");
         }
@@ -633,7 +501,7 @@ public class MainActivity extends AppCompatActivity {
         this.remoteConversationType = conversationType;
         this.remoteUserId = userId;
 
-        appendLog("收到远程录制指令，开始录制 1 分钟视频...");
+        Log.d(TAG, "收到远程录制指令，开始录制 1 分钟视频...");
 
         // 如果正在录制，先停止
         if (cameraManager != null && cameraManager.isRecording()) {
@@ -649,11 +517,11 @@ public class MainActivity extends AppCompatActivity {
         if (cameraManager != null) {
             boolean success = cameraManager.startRecording();
             if (success) {
-                appendLog("远程录制已开始");
+                Log.d(TAG, "远程录制已开始");
 
                 // 设置 1 分钟后自动停止
                 autoStopRunnable = () -> {
-                    appendLog("1 分钟录制完成，正在停止...");
+                    Log.d(TAG, "1 分钟录制完成，正在停止...");
                     cameraManager.stopRecording();
 
                     // 等待录制完全停止
@@ -664,11 +532,11 @@ public class MainActivity extends AppCompatActivity {
 
                 autoStopHandler.postDelayed(autoStopRunnable, 60 * 1000);  // 60 秒
             } else {
-                appendLog("远程录制启动失败");
+                Log.e(TAG, "远程录制启动失败");
                 sendErrorToRemote("录制启动失败");
             }
         } else {
-            appendLog("摄像头未初始化");
+            Log.e(TAG, "摄像头未初始化");
             sendErrorToRemote("摄像头未初始化");
         }
     }
@@ -677,14 +545,14 @@ public class MainActivity extends AppCompatActivity {
      * 上传录制的视频到钉钉
      */
     private void uploadRecordedVideos() {
-        appendLog("开始上传视频到钉钉...");
+        Log.d(TAG, "开始上传视频到钉钉...");
 
         // 获取录制的视频文件
         File videoDir = new File(android.os.Environment.getExternalStoragePublicDirectory(
                 android.os.Environment.DIRECTORY_DCIM), "MultiCam");
 
         if (!videoDir.exists() || !videoDir.isDirectory()) {
-            appendLog("视频目录不存在");
+            Log.e(TAG, "视频目录不存在");
             sendErrorToRemote("视频目录不存在");
             return;
         }
@@ -692,7 +560,7 @@ public class MainActivity extends AppCompatActivity {
         // 获取最新的视频文件（最近 1 分钟内创建的）
         File[] files = videoDir.listFiles((dir, name) -> name.endsWith(".mp4"));
         if (files == null || files.length == 0) {
-            appendLog("没有找到视频文件");
+            Log.e(TAG, "没有找到视频文件");
             sendErrorToRemote("没有找到视频文件");
             return;
         }
@@ -707,48 +575,37 @@ public class MainActivity extends AppCompatActivity {
         }
 
         if (recentFiles.isEmpty()) {
-            appendLog("没有找到最近录制的视频");
+            Log.e(TAG, "没有找到最近录制的视频");
             sendErrorToRemote("没有找到最近录制的视频");
             return;
         }
 
-        appendLog("找到 " + recentFiles.size() + " 个视频文件");
+        Log.d(TAG, "找到 " + recentFiles.size() + " 个视频文件");
 
-        // 获取 RemoteViewFragment 中的 API 客户端
-        FragmentManager fragmentManager = getSupportFragmentManager();
-        Fragment fragment = fragmentManager.findFragmentById(R.id.fragment_container);
+        // 使用 Activity 级别的 API 客户端
+        if (dingTalkApiClient != null && remoteConversationId != null) {
+            VideoUploadService uploadService = new VideoUploadService(this, dingTalkApiClient);
+            uploadService.uploadVideos(recentFiles, remoteConversationId, remoteConversationType, remoteUserId, new VideoUploadService.UploadCallback() {
+                @Override
+                public void onProgress(String message) {
+                    Log.d(TAG, message);
+                }
 
-        if (fragment instanceof RemoteViewFragment) {
-            RemoteViewFragment remoteFragment = (RemoteViewFragment) fragment;
-            DingTalkApiClient apiClient = remoteFragment.getApiClient();
+                @Override
+                public void onSuccess(String message) {
+                    Log.d(TAG, message);
+                    runOnUiThread(() -> Toast.makeText(MainActivity.this, "视频上传成功", Toast.LENGTH_SHORT).show());
+                }
 
-            if (apiClient != null && remoteConversationId != null) {
-                VideoUploadService uploadService = new VideoUploadService(this, apiClient);
-                uploadService.uploadVideos(recentFiles, remoteConversationId, remoteConversationType, remoteUserId, new VideoUploadService.UploadCallback() {
-                    @Override
-                    public void onProgress(String message) {
-                        appendLog(message);
-                    }
-
-                    @Override
-                    public void onSuccess(String message) {
-                        appendLog(message);
-                        runOnUiThread(() -> Toast.makeText(MainActivity.this, "视频上传成功", Toast.LENGTH_SHORT).show());
-                    }
-
-                    @Override
-                    public void onError(String error) {
-                        appendLog("上传失败: " + error);
-                        sendErrorToRemote("上传失败: " + error);
-                    }
-                });
-            } else {
-                appendLog("API 客户端未初始化");
-                sendErrorToRemote("API 客户端未初始化");
-            }
+                @Override
+                public void onError(String error) {
+                    Log.e(TAG, "上传失败: " + error);
+                    sendErrorToRemote("上传失败: " + error);
+                }
+            });
         } else {
-            appendLog("RemoteViewFragment 未找到");
-            sendErrorToRemote("RemoteViewFragment 未找到");
+            Log.e(TAG, "钉钉服务未启动");
+            sendErrorToRemote("钉钉服务未启动");
         }
     }
 
@@ -760,34 +617,138 @@ public class MainActivity extends AppCompatActivity {
             return;
         }
 
+        if (dingTalkApiClient != null) {
+            new Thread(() -> {
+                try {
+                    dingTalkApiClient.sendTextMessage(remoteConversationId, remoteConversationType, "录制失败: " + error, remoteUserId);
+                    Log.d(TAG, "错误消息已发送到钉钉");
+                } catch (Exception e) {
+                    Log.e(TAG, "发送错误消息失败", e);
+                }
+            }).start();
+        }
+    }
+
+    /**
+     * 启动钉钉服务
+     */
+    public void startDingTalkService() {
+        if (!dingTalkConfig.isConfigured()) {
+            Toast.makeText(this, "请先配置钉钉参数", Toast.LENGTH_SHORT).show();
+            return;
+        }
+
+        if (dingTalkStreamManager != null && dingTalkStreamManager.isRunning()) {
+            Log.d(TAG, "钉钉服务已在运行");
+            return;
+        }
+
+        Log.d(TAG, "正在启动钉钉服务...");
+
+        // 创建 API 客户端
+        dingTalkApiClient = new DingTalkApiClient(dingTalkConfig);
+
+        // 创建连接回调
+        DingTalkStreamManager.ConnectionCallback connectionCallback = new DingTalkStreamManager.ConnectionCallback() {
+            @Override
+            public void onConnected() {
+                runOnUiThread(() -> {
+                    Log.d(TAG, "钉钉服务已连接");
+                    Toast.makeText(MainActivity.this, "钉钉服务已启动", Toast.LENGTH_SHORT).show();
+                    // 通知 RemoteViewFragment 更新 UI
+                    updateRemoteViewFragmentUI();
+                });
+            }
+
+            @Override
+            public void onDisconnected() {
+                runOnUiThread(() -> {
+                    Log.d(TAG, "钉钉服务已断开");
+                    // 通知 RemoteViewFragment 更新 UI
+                    updateRemoteViewFragmentUI();
+                });
+            }
+
+            @Override
+            public void onError(String error) {
+                runOnUiThread(() -> {
+                    Log.e(TAG, "钉钉服务连接失败: " + error);
+                    Toast.makeText(MainActivity.this, "连接失败: " + error, Toast.LENGTH_LONG).show();
+                    // 通知 RemoteViewFragment 更新 UI
+                    updateRemoteViewFragmentUI();
+                });
+            }
+        };
+
+        // 创建指令回调
+        DingTalkStreamManager.CommandCallback commandCallback = (conversationId, conversationType, userId) -> {
+            startRemoteRecording(conversationId, conversationType, userId);
+        };
+
+        // 创建并启动 Stream 管理器（启用自动重连）
+        dingTalkStreamManager = new DingTalkStreamManager(this, dingTalkConfig, dingTalkApiClient, connectionCallback);
+        dingTalkStreamManager.start(commandCallback, true); // 启用自动重连
+    }
+
+    /**
+     * 停止钉钉服务
+     */
+    public void stopDingTalkService() {
+        if (dingTalkStreamManager != null) {
+            Log.d(TAG, "正在停止钉钉服务...");
+            dingTalkStreamManager.stop();
+            dingTalkStreamManager = null;
+            dingTalkApiClient = null;
+            Toast.makeText(this, "钉钉服务已停止", Toast.LENGTH_SHORT).show();
+            // 通知 RemoteViewFragment 更新 UI
+            updateRemoteViewFragmentUI();
+        }
+    }
+
+    /**
+     * 获取钉钉服务运行状态
+     */
+    public boolean isDingTalkServiceRunning() {
+        return dingTalkStreamManager != null && dingTalkStreamManager.isRunning();
+    }
+
+    /**
+     * 获取钉钉 API 客户端
+     */
+    public DingTalkApiClient getDingTalkApiClient() {
+        return dingTalkApiClient;
+    }
+
+    /**
+     * 获取钉钉配置
+     */
+    public DingTalkConfig getDingTalkConfig() {
+        return dingTalkConfig;
+    }
+
+    /**
+     * 通知 RemoteViewFragment 更新 UI
+     */
+    private void updateRemoteViewFragmentUI() {
         FragmentManager fragmentManager = getSupportFragmentManager();
         Fragment fragment = fragmentManager.findFragmentById(R.id.fragment_container);
-
         if (fragment instanceof RemoteViewFragment) {
-            RemoteViewFragment remoteFragment = (RemoteViewFragment) fragment;
-            DingTalkApiClient apiClient = remoteFragment.getApiClient();
-
-            if (apiClient != null) {
-                new Thread(() -> {
-                    try {
-                        apiClient.sendTextMessage(remoteConversationId, remoteConversationType, "录制失败: " + error, remoteUserId);
-                        Log.d(TAG, "错误消息已发送到钉钉");
-                    } catch (Exception e) {
-                        Log.e(TAG, "发送错误消息失败", e);
-                    }
-                }).start();
-            }
+            ((RemoteViewFragment) fragment).updateServiceStatus();
         }
     }
 
     @Override
     protected void onDestroy() {
         super.onDestroy();
-        stopLogcatReader();
 
         // 取消自动停止录制的任务
         if (autoStopHandler != null && autoStopRunnable != null) {
             autoStopHandler.removeCallbacks(autoStopRunnable);
+        }
+
+        // 停止钉钉服务
+        if (dingTalkStreamManager != null) {
+            dingTalkStreamManager.stop();
         }
 
         if (cameraManager != null) {

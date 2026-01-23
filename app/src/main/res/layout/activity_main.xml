@@ -20,76 +20,22 @@
             android:orientation="vertical"
             android:background="#000000">
 
-    <!-- 日志面板 -->
+    <!-- 菜单按钮栏 -->
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:orientation="vertical"
-        android:background="#1A1A1A">
+        android:orientation="horizontal"
+        android:padding="8dp"
+        android:background="#2A2A2A">
 
-        <!-- 日志标题栏 -->
-        <LinearLayout
-            android:id="@+id/log_header"
-            android:layout_width="match_parent"
+        <Button
+            android:id="@+id/btn_menu"
+            android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:orientation="horizontal"
-            android:padding="8dp"
-            android:background="#2A2A2A"
-            android:clickable="true"
-            android:focusable="true">
-
-            <Button
-                android:id="@+id/btn_menu"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="☰"
-                android:textSize="18sp"
-                android:minWidth="48dp"
-                android:minHeight="48dp"
-                android:layout_marginEnd="8dp" />
-
-            <View
-                android:layout_width="0dp"
-                android:layout_height="0dp"
-                android:layout_weight="1" />
-
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="日志"
-                android:textColor="#FFFFFF"
-                android:textSize="14sp"
-                android:textStyle="bold"
-                android:gravity="center_vertical"
-                android:layout_marginEnd="8dp" />
-
-            <TextView
-                android:id="@+id/log_toggle"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="▼"
-                android:textColor="#FFFFFF"
-                android:textSize="14sp" />
-        </LinearLayout>
-
-        <!-- 日志内容区域 -->
-        <ScrollView
-            android:id="@+id/log_scroll"
-            android:layout_width="match_parent"
-            android:layout_height="150dp"
-            android:background="#000000"
-            android:visibility="gone">
-
-            <TextView
-                android:id="@+id/log_text"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:padding="8dp"
-                android:textColor="#00FF00"
-                android:textSize="10sp"
-                android:fontFamily="monospace"
-                android:text="日志信息将显示在这里..." />
-        </ScrollView>
+            android:text="☰"
+            android:textSize="18sp"
+            android:minWidth="48dp"
+            android:minHeight="48dp" />
     </LinearLayout>
 
     <!-- 摄像头显示区域：左侧前后，右侧左右 -->
