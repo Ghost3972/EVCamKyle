@@ -379,11 +379,104 @@ public class MainActivity extends AppCompatActivity {
                 CameraManager cm = (CameraManager) getSystemService(Context.CAMERA_SERVICE);
                 String[] cameraIds = cm.getCameraIdList();
 
+                Log.d(TAG, "========== 摄像头诊断信息 ==========");
                 Log.d(TAG, "Available cameras: " + cameraIds.length);
 
                 for (String id : cameraIds) {
-                    Log.d(TAG, "Camera ID: " + id);
+                    Log.d(TAG, "---------- Camera ID: " + id + " ----------");
+
+                    try {
+                        android.hardware.camera2.CameraCharacteristics characteristics = cm.getCameraCharacteristics(id);
+
+                        // 打印摄像头方向
+                        Integer facing = characteristics.get(android.hardware.camera2.CameraCharacteristics.LENS_FACING);
+                        String facingStr = "UNKNOWN";
+                        if (facing != null) {
+                            switch (facing) {
+                                case android.hardware.camera2.CameraCharacteristics.LENS_FACING_FRONT:
+                                    facingStr = "FRONT";
+                                    break;
+                                case android.hardware.camera2.CameraCharacteristics.LENS_FACING_BACK:
+                                    facingStr = "BACK";
+                                    break;
+                                case android.hardware.camera2.CameraCharacteristics.LENS_FACING_EXTERNAL:
+                                    facingStr = "EXTERNAL";
+                                    break;
+                            }
+                        }
+                        Log.d(TAG, "  Facing: " + facingStr);
+
+                        // 打印支持的输出格式和分辨率
+                        android.hardware.camera2.params.StreamConfigurationMap map =
+                            characteristics.get(android.hardware.camera2.CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP);
+
+                        if (map != null) {
+                            // 打印 ImageFormat.PRIVATE 的分辨率
+                            android.util.Size[] privateSizes = map.getOutputSizes(android.graphics.ImageFormat.PRIVATE);
+                            if (privateSizes != null && privateSizes.length > 0) {
+                                Log.d(TAG, "  PRIVATE formats (" + privateSizes.length + " sizes):");
+                                for (int i = 0; i < Math.min(privateSizes.length, 5); i++) {
+                                    Log.d(TAG, "    [" + i + "] " + privateSizes[i].getWidth() + "x" + privateSizes[i].getHeight());
+                                }
+                                if (privateSizes.length > 5) {
+                                    Log.d(TAG, "    ... and " + (privateSizes.length - 5) + " more");
+                                }
+                            }
+
+                            // 打印 ImageFormat.YUV_420_888 的分辨率
+                            android.util.Size[] yuvSizes = map.getOutputSizes(android.graphics.ImageFormat.YUV_420_888);
+                            if (yuvSizes != null && yuvSizes.length > 0) {
+                                Log.d(TAG, "  YUV_420_888 formats (" + yuvSizes.length + " sizes):");
+                                for (int i = 0; i < Math.min(yuvSizes.length, 5); i++) {
+                                    Log.d(TAG, "    [" + i + "] " + yuvSizes[i].getWidth() + "x" + yuvSizes[i].getHeight());
+                                }
+                                if (yuvSizes.length > 5) {
+                                    Log.d(TAG, "    ... and " + (yuvSizes.length - 5) + " more");
+                                }
+                            }
+
+                            // 打印 SurfaceTexture 的分辨率
+                            android.util.Size[] textureSizes = map.getOutputSizes(android.graphics.SurfaceTexture.class);
+                            if (textureSizes != null && textureSizes.length > 0) {
+                                Log.d(TAG, "  SurfaceTexture formats (" + textureSizes.length + " sizes):");
+                                for (int i = 0; i < Math.min(textureSizes.length, 5); i++) {
+                                    Log.d(TAG, "    [" + i + "] " + textureSizes[i].getWidth() + "x" + textureSizes[i].getHeight());
+                                }
+                                if (textureSizes.length > 5) {
+                                    Log.d(TAG, "    ... and " + (textureSizes.length - 5) + " more");
+                                }
+                            }
+                        } else {
+                            Log.w(TAG, "  StreamConfigurationMap is NULL!");
+                        }
+
+                        // 打印硬件级别
+                        Integer hwLevel = characteristics.get(android.hardware.camera2.CameraCharacteristics.INFO_SUPPORTED_HARDWARE_LEVEL);
+                        String hwLevelStr = "UNKNOWN";
+                        if (hwLevel != null) {
+                            switch (hwLevel) {
+                                case android.hardware.camera2.CameraCharacteristics.INFO_SUPPORTED_HARDWARE_LEVEL_LEGACY:
+                                    hwLevelStr = "LEGACY";
+                                    break;
+                                case android.hardware.camera2.CameraCharacteristics.INFO_SUPPORTED_HARDWARE_LEVEL_LIMITED:
+                                    hwLevelStr = "LIMITED";
+                                    break;
+                                case android.hardware.camera2.CameraCharacteristics.INFO_SUPPORTED_HARDWARE_LEVEL_FULL:
+                                    hwLevelStr = "FULL";
+                                    break;
+                                case android.hardware.camera2.CameraCharacteristics.INFO_SUPPORTED_HARDWARE_LEVEL_3:
+                                    hwLevelStr = "LEVEL_3";
+                                    break;
+                            }
+                        }
+                        Log.d(TAG, "  Hardware Level: " + hwLevelStr);
+
+                    } catch (Exception e) {
+                        Log.e(TAG, "  Error getting characteristics for camera " + id + ": " + e.getMessage());
+                    }
                 }
+
+                Log.d(TAG, "========================================");
 
                 // 根据可用摄像头数量初始化
                 if (cameraIds.length >= 4) {
