@@ -52,14 +52,14 @@ public class DingTalkBotMessageListener implements OpenDingTalkCallbackListener<
                 if ("录制".equals(command) || "record".equalsIgnoreCase(command)) {
                     Log.d(TAG, "收到录制指令");
 
-                    // 发送确认消息
-                    sendResponse(conversationId, "收到录制指令，开始录制 1 分钟视频...");
+                    // 发送确认消息，传递 senderId
+                    sendResponse(conversationId, senderId, "收到录制指令，开始录制 1 分钟视频...");
 
                     // 通知监听器执行录制，传递 senderId
                     mainHandler.post(() -> callback.onRecordCommand(conversationId, senderId));
                 } else {
                     Log.d(TAG, "未识别的指令: " + command);
-                    sendResponse(conversationId, "未识别的指令。请发送「录制」开始录制视频。");
+                    sendResponse(conversationId, senderId, "未识别的指令。请发送「录制」开始录制视频。");
                 }
             }
         } catch (Exception e) {
@@ -86,10 +86,10 @@ public class DingTalkBotMessageListener implements OpenDingTalkCallbackListener<
     /**
      * 发送响应消息到钉钉
      */
-    public void sendResponse(String conversationId, String message) {
+    public void sendResponse(String conversationId, String userId, String message) {
         new Thread(() -> {
             try {
-                apiClient.sendTextMessage(conversationId, message);
+                apiClient.sendTextMessage(conversationId, message, userId);
                 Log.d(TAG, "响应消息已发送: " + message);
             } catch (Exception e) {
                 Log.e(TAG, "发送响应消息失败", e);

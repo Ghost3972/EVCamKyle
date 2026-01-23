@@ -32,10 +32,11 @@ public class VideoUploadService {
      * 上传视频文件到钉钉
      * @param videoFiles 视频文件列表
      * @param conversationId 钉钉会话 ID
-     * @param userId 钉钉用户 ID（用于发送文件消息）
+     * @param conversationType 会话类型（"1"=单聊，"2"=群聊）
+     * @param userId 钉钉用户 ID（用于发送视频消息）
      * @param callback 上传回调
      */
-    public void uploadVideos(List<File> videoFiles, String conversationId, String userId, UploadCallback callback) {
+    public void uploadVideos(List<File> videoFiles, String conversationId, String conversationType, String userId, UploadCallback callback) {
         new Thread(() -> {
             try {
                 if (videoFiles == null || videoFiles.isEmpty()) {
@@ -55,17 +56,45 @@ public class VideoUploadService {
                         continue;
                     }
 
-                    callback.onProgress("正在上传 (" + (i + 1) + "/" + videoFiles.size() + "): " + videoFile.getName());
+                    callback.onProgress("正在处理 (" + (i + 1) + "/" + videoFiles.size() + "): " + videoFile.getName());
 
                     try {
-                        // 上传文件到钉钉
-                        String mediaId = apiClient.uploadFile(videoFile);
+                        // 1. 提取视频封面
+                        File thumbnailFile = new File(videoFile.getParent(),
+                                videoFile.getName().replace(".mp4", "_thumb.jpg"));
 
-                        // 发送文件消息到群聊，传递 userId
-                        apiClient.sendFileMessage(conversationId, mediaId, videoFile.getName(), userId);
+                        boolean thumbnailExtracted = VideoThumbnailExtractor.extractThumbnail(videoFile, thumbnailFile);
+                        if (!thumbnailExtracted) {
+                            Log.w(TAG, "封面提取失败，跳过视频: " + videoFile.getName());
+                            callback.onError("封面提取失败: " + videoFile.getName());
+                            continue;
+                        }
+
+                        // 2. 获取视频时长
+                        int duration = VideoThumbnailExtractor.getVideoDuration(videoFile);
+                        if (duration == 0) {
+                            duration = 60; // 默认 60 秒
+                        }
+
+                        // 3. 上传视频文件到钉钉
+                        callback.onProgress("正在上传视频 (" + (i + 1) + "/" + videoFiles.size() + ")...");
+                        String videoMediaId = apiClient.uploadFile(videoFile);
+
+                        // 4. 上传封面图到钉钉
+                        callback.onProgress("正在上传封面 (" + (i + 1) + "/" + videoFiles.size() + ")...");
+                        String picMediaId = apiClient.uploadImage(thumbnailFile);
+
+                        // 5. 发送视频消息
+                        callback.onProgress("正在发送视频消息 (" + (i + 1) + "/" + videoFiles.size() + ")...");
+                        apiClient.sendVideoMessage(conversationId, conversationType, videoMediaId, picMediaId, duration, userId);
 
                         uploadedFiles.add(videoFile.getName());
                         Log.d(TAG, "视频上传成功: " + videoFile.getName());
+
+                        // 6. 清理临时封面文件
+                        if (thumbnailFile.exists()) {
+                            thumbnailFile.delete();
+                        }
 
                     } catch (Exception e) {
                         Log.e(TAG, "上传视频失败: " + videoFile.getName(), e);
@@ -79,8 +108,8 @@ public class VideoUploadService {
                     String successMessage = "视频上传完成！共上传 " + uploadedFiles.size() + " 个文件";
                     callback.onSuccess(successMessage);
 
-                    // 发送完成消息
-                    apiClient.sendTextMessage(conversationId, successMessage);
+                    // 发送完成消息，传递 conversationType 和 userId
+                    apiClient.sendTextMessage(conversationId, conversationType, successMessage, userId);
                 }
 
             } catch (Exception e) {
@@ -93,9 +122,9 @@ public class VideoUploadService {
     /**
      * 上传单个视频文件
      */
-    public void uploadVideo(File videoFile, String conversationId, String userId, UploadCallback callback) {
+    public void uploadVideo(File videoFile, String conversationId, String conversationType, String userId, UploadCallback callback) {
         List<File> files = new ArrayList<>();
         files.add(videoFile);
-        uploadVideos(files, conversationId, userId, callback);
+        uploadVideos(files, conversationId, conversationType, userId, callback);
     }
 }

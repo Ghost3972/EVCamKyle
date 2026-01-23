@@ -162,9 +162,9 @@ public class RemoteViewFragment extends Fragment {
         };
 
         // 创建指令回调
-        DingTalkStreamManager.CommandCallback commandCallback = (conversationId, userId) -> {
+        DingTalkStreamManager.CommandCallback commandCallback = (conversationId, conversationType, userId) -> {
             if (getActivity() instanceof MainActivity) {
-                ((MainActivity) getActivity()).startRemoteRecording(conversationId, userId);
+                ((MainActivity) getActivity()).startRemoteRecording(conversationId, conversationType, userId);
             }
         };
 

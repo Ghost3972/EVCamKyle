@@ -18,7 +18,7 @@ public class DingTalkCommandReceiver implements DingTalkStreamClient.MessageCall
     private final Handler mainHandler;
 
     public interface CommandListener {
-        void onRecordCommand(String conversationId, String userId);
+        void onRecordCommand(String conversationId, String conversationType, String userId);
         void onConnectionStatusChanged(boolean connected);
     }
 
@@ -42,8 +42,8 @@ public class DingTalkCommandReceiver implements DingTalkStreamClient.MessageCall
     }
 
     @Override
-    public void onMessageReceived(String conversationId, String senderUserId, String text) {
-        Log.d(TAG, "收到消息: " + text + " from " + senderUserId);
+    public void onMessageReceived(String conversationId, String conversationType, String senderUserId, String text) {
+        Log.d(TAG, "收到消息: " + text + " from " + senderUserId + " (type: " + conversationType + ")");
 
         // 解析指令
         String command = parseCommand(text);
@@ -51,14 +51,14 @@ public class DingTalkCommandReceiver implements DingTalkStreamClient.MessageCall
         if ("录制".equals(command) || "record".equalsIgnoreCase(command)) {
             Log.d(TAG, "收到录制指令");
 
-            // 发送确认消息
-            sendResponse(conversationId, "收到录制指令，开始录制 1 分钟视频...");
+            // 发送确认消息，传递 conversationType 和 senderUserId
+            sendResponse(conversationId, conversationType, senderUserId, "收到录制指令，开始录制 1 分钟视频...");
 
-            // 通知监听器执行录制，传递 senderUserId
-            mainHandler.post(() -> listener.onRecordCommand(conversationId, senderUserId));
+            // 通知监听器执行录制，传递 conversationType 和 senderUserId
+            mainHandler.post(() -> listener.onRecordCommand(conversationId, conversationType, senderUserId));
         } else {
             Log.d(TAG, "未识别的指令: " + command);
-            sendResponse(conversationId, "未识别的指令。请发送「录制」开始录制视频。");
+            sendResponse(conversationId, conversationType, senderUserId, "未识别的指令。请发送「录制」开始录制视频。");
         }
     }
 
@@ -84,10 +84,10 @@ public class DingTalkCommandReceiver implements DingTalkStreamClient.MessageCall
     /**
      * 发送响应消息到钉钉
      */
-    public void sendResponse(String conversationId, String message) {
+    public void sendResponse(String conversationId, String conversationType, String userId, String message) {
         new Thread(() -> {
             try {
-                apiClient.sendTextMessage(conversationId, message);
+                apiClient.sendTextMessage(conversationId, conversationType, message, userId);
                 Log.d(TAG, "响应消息已发送: " + message);
             } catch (Exception e) {
                 Log.e(TAG, "发送响应消息失败", e);

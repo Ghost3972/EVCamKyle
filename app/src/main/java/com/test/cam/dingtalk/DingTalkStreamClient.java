@@ -32,7 +32,7 @@ public class DingTalkStreamClient extends WebSocketListener {
     public interface MessageCallback {
         void onConnected();
         void onDisconnected();
-        void onMessageReceived(String conversationId, String senderUserId, String text);
+        void onMessageReceived(String conversationId, String conversationType, String senderUserId, String text);
         void onError(String error);
     }
 
@@ -189,6 +189,7 @@ public class DingTalkStreamClient extends WebSocketListener {
             // 检查是否是机器人被 @ 的消息
             if (data.has("conversationType") && data.has("text")) {
                 String conversationId = data.get("conversationId").getAsString();
+                String conversationType = data.get("conversationType").getAsString();
                 String senderUserId = data.has("senderStaffId") ?
                     data.get("senderStaffId").getAsString() : "unknown";
 
@@ -196,13 +197,14 @@ public class DingTalkStreamClient extends WebSocketListener {
                 String text = textObj.get("content").getAsString();
 
                 Log.d(TAG, "收到机器人消息 - conversationId: " + conversationId);
+                Log.d(TAG, "收到机器人消息 - conversationType: " + conversationType);
                 Log.d(TAG, "收到机器人消息 - senderUserId: " + senderUserId);
                 Log.d(TAG, "收到机器人消息 - text: " + text);
 
                 // 检查是否包含 @机器人
                 if (data.has("atUsers")) {
                     Log.d(TAG, "消息包含 @机器人，触发回调");
-                    callback.onMessageReceived(conversationId, senderUserId, text);
+                    callback.onMessageReceived(conversationId, conversationType, senderUserId, text);
                 } else {
                     Log.w(TAG, "消息不包含 atUsers 字段，忽略");
                 }

@@ -84,6 +84,7 @@ public class MainActivity extends AppCompatActivity {
 
     // 远程录制相关
     private String remoteConversationId;  // 钉钉会话 ID
+    private String remoteConversationType;  // 钉钉会话类型（"1"=单聊，"2"=群聊）
     private String remoteUserId;  // 钉钉用户 ID
     private android.os.Handler autoStopHandler;  // 自动停止录制的 Handler
     private Runnable autoStopRunnable;  // 自动停止录制的 Runnable
@@ -455,8 +456,8 @@ public class MainActivity extends AppCompatActivity {
                         textureView.setAspectRatio(previewSize.getHeight(), previewSize.getWidth());
                         appendLog("设置 " + cameraKey + " 宽高比(旋转后): " + previewSize.getHeight() + ":" + previewSize.getWidth());
 
-                        // 应用旋转变换
-                        int rotation = "left".equals(cameraKey) ? 270 : 90;  // 左逆时针90度(270)，右顺时针90度(90)
+                        // 应用旋转变换（修正倒立问题）
+                        int rotation = "left".equals(cameraKey) ? 90 : 270;  // 左顺时针90度(90)，右逆时针90度(270)
                         applyRotationTransform(textureView, previewSize, rotation, cameraKey);
                     } else {
                         // 前后摄像头：使用原始宽高比（1280x800，横向）
@@ -485,22 +486,22 @@ public class MainActivity extends AppCompatActivity {
                 // 根据可用摄像头数量初始化
                 if (cameraIds.length >= 4) {
                     // 有4个或更多摄像头
-                    // 修正摄像头位置映射：前=cameraIds[2], 后=cameraIds[1], 左=cameraIds[0], 右=cameraIds[3]
+                    // 修正摄像头位置映射：前=cameraIds[2], 后=cameraIds[1], 左=cameraIds[3], 右=cameraIds[0]
                     appendLog("使用4路摄像头模式");
                     cameraManager.initCameras(
                             cameraIds[2], textureFront,  // 前摄像头使用 cameraIds[2]
                             cameraIds[1], textureBack,   // 后摄像头使用 cameraIds[1]
-                            cameraIds[0], textureLeft,   // 左摄像头使用 cameraIds[0]
-                            cameraIds[3], textureRight   // 右摄像头使用 cameraIds[3]
+                            cameraIds[3], textureLeft,   // 左摄像头使用 cameraIds[3]（修正）
+                            cameraIds[0], textureRight   // 右摄像头使用 cameraIds[0]（修正）
                     );
                 } else if (cameraIds.length >= 2) {
                     // 只有2个摄像头，使用前两个位置
                     appendLog("使用2路摄像头模式(复用显示)");
                     cameraManager.initCameras(
-                            cameraIds[0], textureFront,
-                            cameraIds[1], textureBack,
                             cameraIds[0], textureLeft,  // 复用第一个
-                            cameraIds[1], textureRight  // 复用第二个
+                            cameraIds[1], textureRight,  // 复用第二个
+                            cameraIds[0], textureFront,
+                            cameraIds[1], textureBack
 
 
                     );
@@ -627,8 +628,9 @@ public class MainActivity extends AppCompatActivity {
      * 远程录制（由钉钉指令触发）
      * 自动录制 1 分钟视频并上传到钉钉
      */
-    public void startRemoteRecording(String conversationId, String userId) {
+    public void startRemoteRecording(String conversationId, String conversationType, String userId) {
         this.remoteConversationId = conversationId;
+        this.remoteConversationType = conversationType;
         this.remoteUserId = userId;
 
         appendLog("收到远程录制指令，开始录制 1 分钟视频...");
@@ -722,7 +724,7 @@ public class MainActivity extends AppCompatActivity {
 
             if (apiClient != null && remoteConversationId != null) {
                 VideoUploadService uploadService = new VideoUploadService(this, apiClient);
-                uploadService.uploadVideos(recentFiles, remoteConversationId, remoteUserId, new VideoUploadService.UploadCallback() {
+                uploadService.uploadVideos(recentFiles, remoteConversationId, remoteConversationType, remoteUserId, new VideoUploadService.UploadCallback() {
                     @Override
                     public void onProgress(String message) {
                         appendLog(message);
@@ -731,7 +733,7 @@ public class MainActivity extends AppCompatActivity {
                     @Override
                     public void onSuccess(String message) {
                         appendLog(message);
-                        Toast.makeText(MainActivity.this, "视频上传成功", Toast.LENGTH_SHORT).show();
+                        runOnUiThread(() -> Toast.makeText(MainActivity.this, "视频上传成功", Toast.LENGTH_SHORT).show());
                     }
 
                     @Override
@@ -768,7 +770,7 @@ public class MainActivity extends AppCompatActivity {
             if (apiClient != null) {
                 new Thread(() -> {
                     try {
-                        apiClient.sendTextMessage(remoteConversationId, "录制失败: " + error);
+                        apiClient.sendTextMessage(remoteConversationId, remoteConversationType, "录制失败: " + error, remoteUserId);
                         Log.d(TAG, "错误消息已发送到钉钉");
                     } catch (Exception e) {
                         Log.e(TAG, "发送错误消息失败", e);

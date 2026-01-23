@@ -134,29 +134,153 @@ public class DingTalkApiClient {
     }
 
     /**
-     * 发送文本消息到群聊
-     * 优先使用 Webhook 方式，如果没有 Webhook 则使用 API 方式
+     * 判断是否为群聊会话
+     * 钉钉的 conversationType 值：
+     * - "1": 单聊
+     * - "2": 群聊
      */
-    public void sendTextMessage(String conversationId, String text) throws IOException {
-        // 优先使用 Webhook 方式（不需要 userIds）
-        String webhookUrl = config.getWebhookUrl();
-        if (webhookUrl != null && !webhookUrl.isEmpty()) {
-            sendMessageViaWebhook(webhookUrl, text);
-            return;
-        }
+    private boolean isGroupConversation(String conversationType) {
+        return "2".equals(conversationType);
+    }
 
-        // 如果没有 Webhook，使用 API 方式（需要 userIds）
-        // 注意：这种方式需要至少一个 userId，否则会失败
-        Log.w(TAG, "未配置 Webhook URL，无法发送文本消息（API 方式需要 userIds）");
-        throw new IOException("未配置 Webhook URL，无法发送文本消息");
+    /**
+     * 发送文本消息（自动判断群聊或单聊）
+     * 群聊使用 Webhook，单聊使用 API
+     */
+    public void sendTextMessage(String conversationId, String conversationType, String text) throws IOException {
+        sendTextMessage(conversationId, conversationType, text, null);
+    }
+
+    /**
+     * 发送文本消息到群聊或单聊
+     * @param conversationId 会话ID
+     * @param conversationType 会话类型（"1"=单聊，"2"=群聊）
+     * @param text 消息内容
+     * @param userId 用户ID（单聊时必需）
+     */
+    public void sendTextMessage(String conversationId, String conversationType, String text, String userId) throws IOException {
+        if (isGroupConversation(conversationType)) {
+            // 群聊：使用 Webhook 方式
+            String webhookUrl = config.getWebhookUrl();
+            if (webhookUrl != null && !webhookUrl.isEmpty()) {
+                sendMessageViaWebhook(webhookUrl, text);
+                return;
+            }
+            // 如果没有 Webhook，使用群聊 API
+            sendTextMessageToGroup(conversationId, text);
+        } else {
+            // 单聊：使用单聊 API
+            if (userId == null || userId.isEmpty()) {
+                throw new IOException("发送单聊文本消息需要提供 userId");
+            }
+            sendTextMessageToUser(userId, text);
+        }
+    }
+
+    /**
+     * 发送文本消息到群聊（使用 API 方式）
+     */
+    private void sendTextMessageToGroup(String conversationId, String text) throws IOException {
+        String accessToken = getAccessToken();
+        String url = BASE_URL + "/v1.0/robot/groupMessages/send";
+
+        // 构建消息参数
+        JsonObject msgParam = new JsonObject();
+        msgParam.addProperty("content", text);
+
+        JsonObject body = new JsonObject();
+        body.addProperty("robotCode", config.getClientId());
+        body.addProperty("openConversationId", conversationId);
+        body.addProperty("msgKey", "sampleText");
+        body.addProperty("msgParam", gson.toJson(msgParam));
+
+        String requestJson = gson.toJson(body);
+        Log.d(TAG, "发送群聊文本消息请求: " + requestJson);
+
+        Request request = new Request.Builder()
+                .url(url)
+                .header("x-acs-dingtalk-access-token", accessToken)
+                .post(RequestBody.create(
+                        MediaType.parse("application/json"),
+                        requestJson
+                ))
+                .build();
+
+        try (Response response = httpClient.newCall(request).execute()) {
+            String responseBody = response.body() != null ? response.body().string() : "";
+            if (!response.isSuccessful()) {
+                Log.e(TAG, "发送群聊文本消息失败，响应: " + responseBody);
+                throw new IOException("发送群聊文本消息失败: " + response.code() + ", " + responseBody);
+            }
+            Log.d(TAG, "群聊文本消息发送成功，响应: " + responseBody);
+        }
+    }
+
+    /**
+     * 发送文本消息到单聊
+     */
+    private void sendTextMessageToUser(String userId, String text) throws IOException {
+        String accessToken = getAccessToken();
+        String url = BASE_URL + "/v1.0/robot/oToMessages/batchSend";
+
+        // 构建消息参数
+        JsonObject msgParam = new JsonObject();
+        msgParam.addProperty("content", text);
+
+        // 构建 userIds 数组
+        com.google.gson.JsonArray userIds = new com.google.gson.JsonArray();
+        userIds.add(userId);
+
+        JsonObject body = new JsonObject();
+        body.addProperty("robotCode", config.getClientId());
+        body.add("userIds", userIds);
+        body.addProperty("msgKey", "sampleText");
+        body.addProperty("msgParam", gson.toJson(msgParam));
+
+        String requestJson = gson.toJson(body);
+        Log.d(TAG, "发送单聊文本消息请求: " + requestJson);
+
+        Request request = new Request.Builder()
+                .url(url)
+                .header("x-acs-dingtalk-access-token", accessToken)
+                .post(RequestBody.create(
+                        MediaType.parse("application/json"),
+                        requestJson
+                ))
+                .build();
+
+        try (Response response = httpClient.newCall(request).execute()) {
+            String responseBody = response.body() != null ? response.body().string() : "";
+            if (!response.isSuccessful()) {
+                Log.e(TAG, "发送单聊文本消息失败，响应: " + responseBody);
+                throw new IOException("发送单聊文本消息失败: " + response.code() + ", " + responseBody);
+            }
+            Log.d(TAG, "单聊文本消息发送成功，响应: " + responseBody);
+        }
     }
 
     /**
      * 上传文件到钉钉
      */
     public String uploadFile(File file) throws IOException {
+        return uploadMedia(file, "file");
+    }
+
+    /**
+     * 上传图片到钉钉
+     */
+    public String uploadImage(File imageFile) throws IOException {
+        return uploadMedia(imageFile, "image");
+    }
+
+    /**
+     * 上传媒体文件到钉钉
+     * @param file 文件
+     * @param type 类型：file, image, voice, video
+     */
+    private String uploadMedia(File file, String type) throws IOException {
         String accessToken = getAccessToken();
-        String url = OAPI_URL + "/media/upload?access_token=" + accessToken + "&type=file";
+        String url = OAPI_URL + "/media/upload?access_token=" + accessToken + "&type=" + type;
 
         RequestBody fileBody = RequestBody.create(
                 MediaType.parse("application/octet-stream"),
@@ -175,7 +299,7 @@ public class DingTalkApiClient {
 
         try (Response response = httpClient.newCall(request).execute()) {
             if (!response.isSuccessful()) {
-                throw new IOException("上传文件失败: " + response.code());
+                throw new IOException("上传媒体文件失败: " + response.code());
             }
 
             String responseBody = response.body().string();
@@ -183,7 +307,7 @@ public class DingTalkApiClient {
 
             if (jsonResponse.has("media_id")) {
                 String mediaId = jsonResponse.get("media_id").getAsString();
-                Log.d(TAG, "文件上传成功，media_id: " + mediaId);
+                Log.d(TAG, type + " 上传成功，media_id: " + mediaId);
                 return mediaId;
             } else {
                 throw new IOException("响应中没有 media_id: " + responseBody);
@@ -192,39 +316,47 @@ public class DingTalkApiClient {
     }
 
     /**
-     * 发送文件消息到群聊
-     * 注意：文件消息必须使用 API 方式，需要提供 userIds
+     * 发送文件消息（自动判断群聊或单聊）
+     * @param conversationId 会话ID
+     * @param conversationType 会话类型（"1"=单聊，"2"=群聊）
+     * @param mediaId 媒体文件ID
+     * @param fileName 文件名
+     * @param userId 用户ID（单聊时必需）
      */
-    public void sendFileMessage(String conversationId, String mediaId, String fileName, String userId) throws IOException {
+    public void sendFileMessage(String conversationId, String conversationType, String mediaId, String fileName, String userId) throws IOException {
+        if (isGroupConversation(conversationType)) {
+            // 群聊：使用群聊 API
+            sendFileMessageToGroup(conversationId, mediaId, fileName);
+        } else {
+            // 单聊：使用单聊 API
+            if (userId == null || userId.isEmpty()) {
+                throw new IOException("发送单聊文件消息需要提供 userId");
+            }
+            sendFileMessageToUser(userId, mediaId, fileName);
+        }
+    }
+
+    /**
+     * 发送文件消息到群聊
+     * 使用群聊消息 API (orgGroupSend)
+     */
+    private void sendFileMessageToGroup(String conversationId, String mediaId, String fileName) throws IOException {
         String accessToken = getAccessToken();
-        String url = BASE_URL + "/v1.0/robot/oToMessages/batchSend";
+        String url = BASE_URL + "/v1.0/robot/groupMessages/send";
 
         // 构建消息参数
         JsonObject msgParam = new JsonObject();
         msgParam.addProperty("mediaId", mediaId);
         msgParam.addProperty("fileName", fileName);
 
-        // 构建 userIds 数组 - 必须至少包含一个 userId
-        com.google.gson.JsonArray userIds = new com.google.gson.JsonArray();
-        if (userId != null && !userId.isEmpty()) {
-            userIds.add(userId);
-        } else {
-            throw new IOException("发送文件消息需要提供 userId");
-        }
-
         JsonObject body = new JsonObject();
         body.addProperty("robotCode", config.getClientId());
-        body.add("userIds", userIds);
+        body.addProperty("openConversationId", conversationId);
         body.addProperty("msgKey", "sampleFile");
         body.addProperty("msgParam", gson.toJson(msgParam));
 
-        // 如果有会话ID，添加到请求中
-        if (conversationId != null && !conversationId.isEmpty()) {
-            body.addProperty("openConversationId", conversationId);
-        }
-
         String requestJson = gson.toJson(body);
-        Log.d(TAG, "发送文件消息请求: " + requestJson);
+        Log.d(TAG, "发送群聊文件消息请求: " + requestJson);
 
         Request request = new Request.Builder()
                 .url(url)
@@ -238,10 +370,174 @@ public class DingTalkApiClient {
         try (Response response = httpClient.newCall(request).execute()) {
             String responseBody = response.body() != null ? response.body().string() : "";
             if (!response.isSuccessful()) {
-                Log.e(TAG, "发送文件消息失败，响应: " + responseBody);
-                throw new IOException("发送文件消息失败: " + response.code() + ", " + responseBody);
+                Log.e(TAG, "发送群聊文件消息失败，响应: " + responseBody);
+                throw new IOException("发送群聊文件消息失败: " + response.code() + ", " + responseBody);
             }
-            Log.d(TAG, "文件消息发送成功，响应: " + responseBody);
+            Log.d(TAG, "群聊文件消息发送成功，响应: " + responseBody);
+        }
+    }
+
+    /**
+     * 发送文件消息到单聊
+     * 使用单聊消息 API (batchSendOTO)
+     */
+    public void sendFileMessageToUser(String userId, String mediaId, String fileName) throws IOException {
+        String accessToken = getAccessToken();
+        String url = BASE_URL + "/v1.0/robot/oToMessages/batchSend";
+
+        // 构建消息参数
+        JsonObject msgParam = new JsonObject();
+        msgParam.addProperty("mediaId", mediaId);
+        msgParam.addProperty("fileName", fileName);
+
+        // 构建 userIds 数组
+        com.google.gson.JsonArray userIds = new com.google.gson.JsonArray();
+        if (userId != null && !userId.isEmpty()) {
+            userIds.add(userId);
+        } else {
+            throw new IOException("发送单聊文件消息需要提供 userId");
+        }
+
+        JsonObject body = new JsonObject();
+        body.addProperty("robotCode", config.getClientId());
+        body.add("userIds", userIds);
+        body.addProperty("msgKey", "sampleFile");
+        body.addProperty("msgParam", gson.toJson(msgParam));
+
+        String requestJson = gson.toJson(body);
+        Log.d(TAG, "发送单聊文件消息请求: " + requestJson);
+
+        Request request = new Request.Builder()
+                .url(url)
+                .header("x-acs-dingtalk-access-token", accessToken)
+                .post(RequestBody.create(
+                        MediaType.parse("application/json"),
+                        requestJson
+                ))
+                .build();
+
+        try (Response response = httpClient.newCall(request).execute()) {
+            String responseBody = response.body() != null ? response.body().string() : "";
+            if (!response.isSuccessful()) {
+                Log.e(TAG, "发送单聊文件消息失败，响应: " + responseBody);
+                throw new IOException("发送单聊文件消息失败: " + response.code() + ", " + responseBody);
+            }
+            Log.d(TAG, "单聊文件消息发送成功，响应: " + responseBody);
+        }
+    }
+
+    /**
+     * 发送视频消息（自动判断群聊或单聊）
+     * @param conversationId 会话ID
+     * @param conversationType 会话类型（"1"=单聊，"2"=群聊）
+     * @param videoMediaId 视频媒体ID
+     * @param picMediaId 封面图媒体ID
+     * @param duration 视频时长（秒）
+     * @param userId 用户ID（单聊时必需）
+     */
+    public void sendVideoMessage(String conversationId, String conversationType, String videoMediaId, String picMediaId,
+                                  int duration, String userId) throws IOException {
+        if (isGroupConversation(conversationType)) {
+            // 群聊：使用群聊 API
+            sendVideoMessageToGroup(conversationId, videoMediaId, picMediaId, duration);
+        } else {
+            // 单聊：使用单聊 API
+            if (userId == null || userId.isEmpty()) {
+                throw new IOException("发送单聊视频消息需要提供 userId");
+            }
+            sendVideoMessageToUser(userId, videoMediaId, picMediaId, duration);
+        }
+    }
+
+    /**
+     * 发送视频消息到群聊
+     */
+    private void sendVideoMessageToGroup(String conversationId, String videoMediaId,
+                                          String picMediaId, int duration) throws IOException {
+        String accessToken = getAccessToken();
+        String url = BASE_URL + "/v1.0/robot/groupMessages/send";
+
+        // 构建消息参数
+        JsonObject msgParam = new JsonObject();
+        msgParam.addProperty("videoMediaId", videoMediaId);
+        msgParam.addProperty("picMediaId", picMediaId);
+        msgParam.addProperty("videoType", "mp4");
+        msgParam.addProperty("duration", String.valueOf(duration));
+        msgParam.addProperty("height", "200");  // 视频显示高度
+
+        JsonObject body = new JsonObject();
+        body.addProperty("robotCode", config.getClientId());
+        body.addProperty("openConversationId", conversationId);
+        body.addProperty("msgKey", "sampleVideo");
+        body.addProperty("msgParam", gson.toJson(msgParam));
+
+        String requestJson = gson.toJson(body);
+        Log.d(TAG, "发送群聊视频消息请求: " + requestJson);
+
+        Request request = new Request.Builder()
+                .url(url)
+                .header("x-acs-dingtalk-access-token", accessToken)
+                .post(RequestBody.create(
+                        MediaType.parse("application/json"),
+                        requestJson
+                ))
+                .build();
+
+        try (Response response = httpClient.newCall(request).execute()) {
+            String responseBody = response.body() != null ? response.body().string() : "";
+            if (!response.isSuccessful()) {
+                Log.e(TAG, "发送群聊视频消息失败，响应: " + responseBody);
+                throw new IOException("发送群聊视频消息失败: " + response.code() + ", " + responseBody);
+            }
+            Log.d(TAG, "群聊视频消息发送成功，响应: " + responseBody);
+        }
+    }
+
+    /**
+     * 发送视频消息到单聊
+     */
+    private void sendVideoMessageToUser(String userId, String videoMediaId,
+                                         String picMediaId, int duration) throws IOException {
+        String accessToken = getAccessToken();
+        String url = BASE_URL + "/v1.0/robot/oToMessages/batchSend";
+
+        // 构建消息参数
+        JsonObject msgParam = new JsonObject();
+        msgParam.addProperty("videoMediaId", videoMediaId);
+        msgParam.addProperty("picMediaId", picMediaId);
+        msgParam.addProperty("videoType", "mp4");
+        msgParam.addProperty("duration", String.valueOf(duration));
+        msgParam.addProperty("height", "200");
+
+        // 构建 userIds 数组
+        com.google.gson.JsonArray userIds = new com.google.gson.JsonArray();
+        userIds.add(userId);
+
+        JsonObject body = new JsonObject();
+        body.addProperty("robotCode", config.getClientId());
+        body.add("userIds", userIds);
+        body.addProperty("msgKey", "sampleVideo");
+        body.addProperty("msgParam", gson.toJson(msgParam));
+
+        String requestJson = gson.toJson(body);
+        Log.d(TAG, "发送单聊视频消息请求: " + requestJson);
+
+        Request request = new Request.Builder()
+                .url(url)
+                .header("x-acs-dingtalk-access-token", accessToken)
+                .post(RequestBody.create(
+                        MediaType.parse("application/json"),
+                        requestJson
+                ))
+                .build();
+
+        try (Response response = httpClient.newCall(request).execute()) {
+            String responseBody = response.body() != null ? response.body().string() : "";
+            if (!response.isSuccessful()) {
+                Log.e(TAG, "发送单聊视频消息失败，响应: " + responseBody);
+                throw new IOException("发送单聊视频消息失败: " + response.code() + ", " + responseBody);
+            }
+            Log.d(TAG, "单聊视频消息发送成功，响应: " + responseBody);
         }
     }
 

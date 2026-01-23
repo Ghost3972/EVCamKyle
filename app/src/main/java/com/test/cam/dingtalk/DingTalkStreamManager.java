@@ -40,7 +40,7 @@ public class DingTalkStreamManager {
     }
 
     public interface CommandCallback {
-        void onRecordCommand(String conversationId, String userId);
+        void onRecordCommand(String conversationId, String conversationType, String userId);
     }
 
     public DingTalkStreamManager(Context context, DingTalkConfig config,
@@ -162,6 +162,7 @@ public class DingTalkStreamManager {
 
                 String content = null;
                 String conversationId = null;
+                String conversationType = null;
                 String senderId = null;
                 String sessionWebhook = null;
 
@@ -177,11 +178,14 @@ public class DingTalkStreamManager {
                     }
                 }
 
-                // 解析会话ID和发送者ID
+                // 解析会话ID、会话类型和发送者ID
                 conversationId = message.optString("conversationId", "");
                 if (conversationId.isEmpty()) {
                     conversationId = message.optString("openConversationId", "");
                 }
+
+                // 解析会话类型：1=单聊，2=群聊
+                conversationType = message.optString("conversationType", "");
 
                 senderId = message.optString("senderStaffId", "");
                 if (senderId.isEmpty()) {
@@ -200,6 +204,7 @@ public class DingTalkStreamManager {
 
                 Log.d(TAG, "解析成功 - 内容: " + content);
                 Log.d(TAG, "解析成功 - 会话ID: " + conversationId);
+                Log.d(TAG, "解析成功 - 会话类型: " + conversationType);
                 Log.d(TAG, "解析成功 - 发送者ID: " + senderId);
                 Log.d(TAG, "解析成功 - SessionWebhook: " + sessionWebhook);
 
@@ -219,10 +224,11 @@ public class DingTalkStreamManager {
                     // 发送确认消息
                     sendResponse(sessionWebhook, "收到录制指令，开始录制 1 分钟视频...");
 
-                    // 通知监听器执行录制，传递 senderId
+                    // 通知监听器执行录制，传递 conversationType 和 senderId
                     String finalConversationId = conversationId;
+                    String finalConversationType = conversationType;
                     String finalSenderId = senderId;
-                    mainHandler.post(() -> commandCallback.onRecordCommand(finalConversationId, finalSenderId));
+                    mainHandler.post(() -> commandCallback.onRecordCommand(finalConversationId, finalConversationType, finalSenderId));
 
                 } else if ("帮助".equals(command) || "help".equalsIgnoreCase(command)) {
                     sendResponse(sessionWebhook,
