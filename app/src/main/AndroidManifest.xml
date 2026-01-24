@@ -77,6 +77,15 @@
             android:exported="false"
             android:theme="@style/Theme.Cam.Fullscreen" />
 
+        <!-- 透明启动 Activity：用于开机自启动，完全无感知 -->
+        <activity
+            android:name=".TransparentBootActivity"
+            android:exported="false"
+            android:theme="@style/Theme.Cam.Transparent"
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:taskAffinity="" />
+
         <!-- 前台服务：用于后台录制保护 -->
         <service
             android:name=".CameraForegroundService"

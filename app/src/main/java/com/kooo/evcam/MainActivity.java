@@ -149,12 +149,16 @@ public class MainActivity extends AppCompatActivity {
         // 检查是否是开机自启动
         boolean autoStartFromBoot = getIntent().getBooleanExtra("auto_start_from_boot", false);
         if (autoStartFromBoot) {
-            AppLog.d(TAG, "开机自启动模式：延迟5秒后自动移到后台");
-            // 延迟5秒后自动移到后台，避免用户看到闪现的界面
-            new android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(() -> {
+            AppLog.d(TAG, "开机自启动模式：立即移到后台（不显示界面）");
+            
+            // 清除标志，避免后续重复检测
+            getIntent().removeExtra("auto_start_from_boot");
+            
+            // 立即移到后台
+            new android.os.Handler(android.os.Looper.getMainLooper()).post(() -> {
                 moveTaskToBack(true);
-                AppLog.d(TAG, "开机自启动：已自动移到后台");
-            }, 5000);
+                AppLog.d(TAG, "开机自启动：已立即移到后台");
+            });
         }
 
         // 检查是否有启动时传入的远程命令（冷启动）

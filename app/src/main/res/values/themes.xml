@@ -30,6 +30,18 @@
         <item name="android:colorBackground">@android:color/black</item>
     </style>
 
+    <!-- 完全透明主题（用于开机自启动） -->
+    <style name="Theme.Cam.Transparent" parent="Theme.Cam">
+        <item name="android:windowIsTranslucent">true</item>
+        <item name="android:windowBackground">@android:color/transparent</item>
+        <item name="android:windowContentOverlay">@null</item>
+        <item name="android:windowNoTitle">true</item>
+        <item name="android:windowIsFloating">false</item>
+        <item name="android:backgroundDimEnabled">false</item>
+        <item name="android:windowAnimationStyle">@null</item>
+        <item name="android:windowDisablePreview">true</item>
+    </style>
+
     <!-- 导航菜单项文字样式 -->
     <style name="NavigationMenuTextAppearance" parent="TextAppearance.AppCompat.Body1">
         <item name="android:textSize">18sp</item>
